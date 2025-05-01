@@ -33,7 +33,6 @@
 #include <PNGdec.h>
 
 #include "CachedTile.h"
-#include "TileJob.h"
 #include "MemoryBuffer.h"
 
 constexpr uint16_t OSM_TILESIZE = 256;
