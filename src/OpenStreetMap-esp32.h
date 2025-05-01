@@ -33,7 +33,6 @@
 #include <PNGdec.h>
 
 #include "CachedTile.h"
-#include "ScopedMutex.h"
 #include "TileJob.h"
 #include "MemoryBuffer.h"
 
@@ -62,7 +61,7 @@ public:
     void setTileFolder(const char* folder);
 
 private:
-    thread_local static OpenStreetMap *currentInstance;
+    static OpenStreetMap *currentInstance;
     static void PNGDraw(PNGDRAW *pDraw);
     double lon2tile(double lon, uint8_t zoom);
     double lat2tile(double lat, uint8_t zoom);
