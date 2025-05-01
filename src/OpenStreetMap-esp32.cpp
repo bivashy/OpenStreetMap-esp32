@@ -378,6 +378,8 @@ bool OpenStreetMap::fetchTile(CachedTile &tile, uint32_t x, uint32_t y, uint8_t 
     return true;
 }
 
+OpenStreetMap *OpenStreetMap::currentInstance = nullptr;
+
 void OpenStreetMap::PNGDraw(PNGDRAW *pDraw)
 {
     if (!currentInstance || !currentInstance->currentTileBuffer)
