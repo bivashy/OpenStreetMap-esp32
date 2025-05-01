@@ -285,93 +285,11 @@ bool OpenStreetMap::fetchMap(LGFX_Sprite &mapSprite, double longitude, double la
     return true;
 }
 
-bool OpenStreetMap::fillBuffer(WiFiClient *stream, MemoryBuffer &buffer, size_t contentSize, String &result)
+void OpenStreetMap::setTileFolder(const char* folder)
 {
-    size_t readSize = 0;
-    unsigned long lastReadTime = millis();
-    while (readSize < contentSize)
-    {
-        const size_t availableData = stream->available();
-        if (!availableData)
-        {
-            if (millis() - lastReadTime >= OSM_TILE_TIMEOUT_MS)
-            {
-                result = "Timeout: " + String(OSM_TILE_TIMEOUT_MS) + " ms";
-                return false;
-            }
-            vTaskDelay(pdMS_TO_TICKS(1));
-            continue;
-        }
-
-        const size_t remaining = contentSize - readSize;
-        const size_t toRead = std::min(availableData, remaining);
-        if (toRead == 0)
-            continue;
-
-        const int bytesRead = stream->readBytes(buffer.get() + readSize, toRead);
-        if (bytesRead > 0)
-        {
-            readSize += bytesRead;
-            lastReadTime = millis();
-        }
-        else
-            vTaskDelay(pdMS_TO_TICKS(1));
-    }
-    return true;
-}
-
-std::optional<std::unique_ptr<MemoryBuffer>> OpenStreetMap::urlToBuffer(const char *url, String &result)
-{
-    HTTPClientRAII http;
-    if (!http.begin(url))
-    {
-        result = "Failed to initialize HTTP client";
-        return std::nullopt;
-    }
-
-    const int httpCode = http.GET();
-    if (httpCode != HTTP_CODE_OK)
-    {
-        result = "HTTP Error: " + String(httpCode);
-        return std::nullopt;
-    }
-
-    const size_t contentSize = http.getSize();
-    if (contentSize < 1)
-    {
-        result = "Empty or chunked response";
-        return std::nullopt;
-    }
-
-    WiFiClient *stream = http.getStreamPtr();
-    if (!stream)
-    {
-        result = "Failed to get HTTP stream";
-        return std::nullopt;
-    }
-
-    auto buffer = std::make_unique<MemoryBuffer>(contentSize);
-    if (!buffer->isAllocated())
-    {
-        result = "Failed to allocate buffer";
-        return std::nullopt;
-    }
-
-    if (!fillBuffer(stream, *buffer, contentSize, result))
-        return std::nullopt;
-
-    return buffer;
-}
-
-OpenStreetMap *OpenStreetMap::currentInstance = nullptr;
-
-void OpenStreetMap::PNGDraw(PNGDRAW *pDraw)
-{
-    if (!currentInstance || !currentInstance->currentTileBuffer)
-        return;
-
-    uint16_t *destRow = currentInstance->currentTileBuffer + (pDraw->y * OSM_TILESIZE);
-    currentInstance->png.getLineAsRGB565(pDraw, destRow, PNG_RGB565_BIG_ENDIAN, 0xffffffff);
+    tileFolder = folder;
+    if (!tileFolder.endsWith("/"))
+        tileFolder += "/";
 }
 
 bool OpenStreetMap::fetchTile(CachedTile &tile, uint32_t x, uint32_t y, uint8_t zoom, String &result)
@@ -383,16 +301,50 @@ bool OpenStreetMap::fetchTile(CachedTile &tile, uint32_t x, uint32_t y, uint8_t 
         return false;
     }
 
-    static char url[64];
-    snprintf(url, sizeof(url), "https://tile.openstreetmap.org/%u/%lu/%lu.png", zoom, x, y);
+    // Construct the file path
+    String filePath = tileFolder;
+    filePath += String(zoom);
+    filePath += "/";
+    filePath += String(x);
+    filePath += "/";
+    filePath += String(y);
+    filePath += ".png";
+
+    File file = SD.open(filePath, FILE_READ);
+    if (!file)
+    {
+        result = "Failed to open file: " + filePath;
+        return false;
+    }
+
+    size_t fileSize = file.size();
+    if (fileSize == 0)
+    {
+        result = "Empty file: " + filePath;
+        file.close();
+        return false;
+    }
+
+    auto buffer = std::make_unique<MemoryBuffer>(fileSize);
+    if (!buffer->isAllocated())
+    {
+        result = "Failed to allocate buffer";
+        file.close();
+        return false;
+    }
+
+    size_t bytesRead = file.readBytes(reinterpret_cast<char*>(buffer->get()), fileSize);
+    file.close();
+
+    if (bytesRead != fileSize)
+    {
+        result = "Failed to read file: " + filePath;
+        return false;
+    }
 
     int decodeResult;
     {
-        auto buffer = urlToBuffer(url, result);
-        if (!buffer)
-            return false;
-
-        const int16_t rc = png.openRAM(buffer.value()->get(), buffer.value()->size(), PNGDraw);
+        const int16_t rc = png.openRAM(buffer->get(), buffer->size(), PNGDraw);
         if (rc != PNG_SUCCESS)
         {
             result = "PNG Decoder Error: " + String(rc);
@@ -414,7 +366,7 @@ bool OpenStreetMap::fetchTile(CachedTile &tile, uint32_t x, uint32_t y, uint8_t 
 
     if (decodeResult != PNG_SUCCESS)
     {
-        result = "Decoding " + String(url) + " failed with code: " + String(decodeResult);
+        result = "Decoding " + filePath + " failed with code: " + String(decodeResult);
         tile.valid = false;
         return false;
     }
@@ -424,4 +376,15 @@ bool OpenStreetMap::fetchTile(CachedTile &tile, uint32_t x, uint32_t y, uint8_t 
     tile.z = zoom;
     tile.valid = true;
     return true;
+}
+
+OpenStreetMap *OpenStreetMap::currentInstance = nullptr;
+
+void OpenStreetMap::PNGDraw(PNGDRAW *pDraw)
+{
+    if (!currentInstance || !currentInstance->currentTileBuffer)
+        return;
+
+    uint16_t *destRow = currentInstance->currentTileBuffer + (pDraw->y * OSM_TILESIZE);
+    currentInstance->png.getLineAsRGB565(pDraw, destRow, PNG_RGB565_BIG_ENDIAN, 0xffffffff);
 }

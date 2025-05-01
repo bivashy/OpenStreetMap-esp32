@@ -25,16 +25,17 @@
 #define OPENSTREETMAP_ESP32_H
 
 #include <Arduino.h>
-#include <WiFiClient.h>
 #include <SD.h>
 #include <vector>
 #include <optional>
+#include <atomic>
 #include <LovyanGFX.hpp>
+#include <PNGdec.h>
 
 #include "CachedTile.h"
+#include "ScopedMutex.h"
+#include "TileJob.h"
 #include "MemoryBuffer.h"
-#include "HTTPClientRAII.h"
-#include "pngdecRAII.h"
 
 constexpr uint16_t OSM_TILESIZE = 256;
 constexpr uint16_t OSM_TILE_TIMEOUT_MS = 2500;
@@ -58,9 +59,10 @@ public:
     bool resizeTilesCache(uint16_t numberOfTiles);
     void freeTilesCache();
     bool fetchMap(LGFX_Sprite &sprite, double longitude, double latitude, uint8_t zoom);
+    void setTileFolder(const char* folder);
 
 private:
-    static OpenStreetMap *currentInstance;
+    thread_local static OpenStreetMap *currentInstance;
     static void PNGDraw(PNGDRAW *pDraw);
     double lon2tile(double lon, uint8_t zoom);
     double lat2tile(double lat, uint8_t zoom);
@@ -72,11 +74,21 @@ private:
     std::optional<std::unique_ptr<MemoryBuffer>> urlToBuffer(const char *url, String &result);
     bool fillBuffer(WiFiClient *stream, MemoryBuffer &buffer, size_t contentSize, String &result);
     bool composeMap(LGFX_Sprite &mapSprite, const tileList &requiredTiles, uint8_t zoom);
+    static void tileFetcherTask(void *param);
+    void decrementActiveJobs();
+    void startTileWorkersIfNeeded();
+    bool isTileBeingFetched(uint32_t x, uint32_t y, uint8_t z);
+    bool isTilePresent(uint32_t x, uint32_t y, uint8_t z);
 
+    SemaphoreHandle_t cacheSemaphore = nullptr;
     std::vector<CachedTile> tilesCache;
     uint16_t *currentTileBuffer = nullptr;
     PNG png;
-    
+ 
+    QueueHandle_t jobQueue = nullptr;
+    std::atomic<int> pendingJobs = 0;
+    bool tasksStarted = false;
+
     uint16_t mapWidth = 320;
     uint16_t mapHeight = 240;
 
@@ -87,6 +99,8 @@ private:
     int32_t startTileIndexY = 0;
 
     uint16_t numberOfColums = 0;
+
+    String tileFolder = "/tiles";
 };
 
 #endif
